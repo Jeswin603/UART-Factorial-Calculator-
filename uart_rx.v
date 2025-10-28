@@ -7,12 +7,13 @@ module uart_rx
     input wire clk, 
     input wire reset, 
     input wire rx, 
-    input wire sel,
     input wire s_tick, 
     output reg rx_done_tick, 
-    output reg[7:0] dout,
-     output reg [7:0] dout1 
+    output wire [7:0] dout, 
+    output reg [31:0] factorial_result, 
+    output reg [7:0] final_result 
 ); 
+    integer i;
     // Symbolic state declaration 
     localparam [1:0] 
         idle  = 2'b00,
@@ -26,6 +27,7 @@ module uart_rx
     reg [2:0] n_reg, n_next; 
     reg [7:0] b_reg, b_next; 
 
+
     // Body 
     // FSMD state & data registers 
     always @(posedge clk or posedge reset) 
@@ -34,12 +36,24 @@ module uart_rx
             s_reg <= 0; 
             n_reg <= 0; 
             b_reg <= 0; 
+            final_result <= 0; // Initialize final_result
+            factorial_result <=0;
         end else begin 
             state_reg <= state_next; 
             s_reg <= s_next; 
             n_reg <= n_next; 
             b_reg <= b_next; 
-    end
+            if (rx_done_tick) 
+            final_result <= b_reg; 
+            begin
+                factorial_result =1;
+                for(i=1;i<=final_result;i=i+1)
+                    factorial_result=factorial_result*i;
+                end
+
+
+        end 
+
     // FSMD next-state logic 
     always @* begin 
         // Default values for next state and outputs 
@@ -100,17 +114,6 @@ module uart_rx
     end 
 
     // Output assignment 
-always @(posedge clk or posedge reset) begin
-        if (reset) begin
-            dout <= 0;
-            dout1 <= 0;
-        end else if (rx_done_tick) begin
-            if (sel == 1)
-                dout <= b_reg;  // Assign to dout if sel is 1
-            else
-                dout1 <= b_reg; // Assign to dout1 if sel is 0
-        end
-    end
-
+assign dout = b_reg;
 
 endmodule
