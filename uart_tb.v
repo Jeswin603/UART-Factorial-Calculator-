@@ -1,119 +1,125 @@
-module uart_rx 
-#( 
-    parameter DBIT = 8,     // Number of data bits 
-    parameter SB_TICK = 16  // Number of ticks for stop bits
-) 
-( 
-    input wire clk, 
-    input wire reset, 
-    input wire rx, 
-    input wire s_tick, 
-    output reg rx_done_tick, 
-    output wire [7:0] dout, 
-    output reg [31:0] factorial_result, 
-    output reg [7:0] final_result 
-); 
-    integer i;
-    // Symbolic state declaration 
-    localparam [1:0] 
-        idle  = 2'b00,
-        start = 2'b01,
-        data  = 2'b10,
-        stop  = 2'b11;
+module uart_tx_rx_tb;
 
-    // Signal declarations 
-    reg [1:0] state_reg, state_next; 
-    reg [3:0] s_reg, s_next; 
-    reg [2:0] n_reg, n_next; 
-    reg [7:0] b_reg, b_next; 
+  // Parameters
+  parameter DBIT = 8;          // Number of data bits`
+  parameter SB_TICK = 16;      // Number of ticks for the stop bit
+  parameter CLKS_PER_BIT = 10416; // For 9600 baud rate with a 100 MHz clock
+  
+  // Clock and reset
+  reg clk;
+  reg reset;
 
+   wire [31:0]factorial_result;//
 
-    // Body 
-    // FSMD state & data registers 
-    always @(posedge clk or posedge reset) 
-        if (reset) begin 
-            state_reg <= idle; 
-            s_reg <= 0; 
-            n_reg <= 0; 
-            b_reg <= 0; 
-            final_result <= 0; // Initialize final_result
-            factorial_result <=0;
-        end else begin 
-            state_reg <= state_next; 
-            s_reg <= s_next; 
-            n_reg <= n_next; 
-            b_reg <= b_next; 
-            if (rx_done_tick) 
-            final_result <= b_reg; 
-            begin
-                factorial_result =1;
-                for(i=1;i<=final_result;i=i+1)
-                    factorial_result=factorial_result*i;
-                end
+  // Transmitter signals
+  reg [7:0] tx_data;
+  reg tx_start;
+  wire tx_busy;
+  wire tx;
 
+  // Receiver signals
+  wire[7:0] rx_data;
+  wire rx_done_tick;
+  wire [7:0] final_result;
+  reg rx;
 
-        end 
+  // Baud rate generator
+  reg [13:0] tick_counter;
+  wire s_tick;  // Baud rate tick
+  
+  assign s_tick = (tick_counter == (CLKS_PER_BIT - 1));
 
-    // FSMD next-state logic 
-    always @* begin 
-        // Default values for next state and outputs 
-        state_next = state_reg; 
-        rx_done_tick = 1'b0; 
-        s_next = s_reg; 
-        n_next = n_reg; 
-        b_next = b_reg; 
+  // Internal flag to check data transfer
+  reg data_received_flag;
 
-        case (state_reg)
-            idle: begin 
-                if (~rx) begin // Detect start bit
-                    state_next = start; 
-                    s_next = 0; 
-                end 
-            end 
+  // Clock generation
+  initial begin
+    clk = 0;
+    forever #5 clk = ~clk;  // 100 MHz clock
+  end
 
-            start: begin 
-                if (s_tick) begin 
-                    if (s_reg == 7) begin // Middle of start bit
-                        state_next = data; 
-                        s_next = 0; 
-                        n_next = 0; 
-                    end else begin 
-                        s_next = s_reg + 1; 
-                    end 
-                end 
-            end 
+  // Reset generation
+  initial begin
+    reset = 1;
+    #10 reset = 0;
+  end
 
-            data: begin 
-                if (s_tick) begin 
-                    if (s_reg == 15) begin // Middle of a data bit
-                        s_next = 0; 
-                        b_next = {rx, b_reg[7:1]}; // Shift in received bit
-                        if (n_reg == (DBIT - 1)) 
-                            state_next = stop; 
-                        else 
-                            n_next = n_reg + 1; 
-                    end else begin 
-                        s_next = s_reg + 1; 
-                    end 
-                end 
-            end 
+  // Baud rate tick generator
+  always @(posedge clk or posedge reset) begin
+    if (reset)
+      tick_counter <= 0;
+    else if (s_tick)
+      tick_counter <= 0;
+    else
+      tick_counter <= tick_counter + 1;
+  end
 
-            stop: begin 
-                if (s_tick) begin 
-                    if (s_reg == (SB_TICK - 1)) begin // End of stop bit(s)
-                        state_next = idle; 
-                        rx_done_tick = 1'b1; 
-                    end else begin 
-                        s_next = s_reg + 1; 
-                    end 
-                end 
-            end 
+  // Instantiate UART transmitter
+  uart_tx #(
+    .DBIT(DBIT),
+    .SB_TICK(SB_TICK)
+  ) uart_tx_inst (
+    .clk(clk),
+    .reset(reset),
+    .tx_start(tx_start),
+    .s_tick(s_tick),
+    .din(tx_data),
+    .tx(tx),
+    .tx_done_tick(tx_busy)
+  );
 
-            default: state_next = idle; 
-        endcase 
-    end 
+  // Instantiate UART receiver
+  uart_rx #(
+    .DBIT(DBIT),
+    .SB_TICK(SB_TICK)
+  )
+  uart_rx_inst (
+    .clk(clk),
+    .reset(reset),
+    .rx(tx),
+    .s_tick(s_tick),
+    .dout(rx_data),
+    .rx_done_tick(rx_done_tick),
+    .final_result(final_result),
+    .factorial_result(factorial_result)
+    
+  );
 
-    // Output assignment 
-assign dout = b_reg;
+  // Test stimulus
+  initial begin
+    // Initialize signals
+    tx_start = 0;
+    rx = 1;
+    tx_data = 0;
+    data_received_flag = 0;
 
+    // Wait for reset
+    #20;
+
+    // Transmit a byte
+    tx_data = 8'b00001010;  
+    tx_start = 1;
+    #10;
+    tx_start = 0;
+
+    // Wait for data to be received
+    wait(rx_done_tick);
+
+    // Check received data
+    if (rx_data == tx_data) begin
+      data_received_flag <= 1;
+      $display("Time: %0t ns - Data successfully transmitted and received: %h", $time, rx_data);
+    end else begin
+      $display("Time: %0t ns - Data mismatch! Transmitted: %h, Received: %h", $time, tx_data, rx_data);
+    end
+
+    // Wait for 10 seconds after data is received
+    #1_000_000;  // 1 seconds in simulation time
+
+// Monitor the factorial result
+    $monitor("Factorial of %d is %d", final_result, factorial_result);
+  
+    // End simulation
+    $display("Time: %0t ns - Simulation ended after 10 seconds of data reception.", $time);
+end
 endmodule
